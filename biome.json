@@ -1,0 +1,12 @@
+{
+  "extends": ["@piondev/shared-configs/biome"],
+  "files": {
+    "ignore": ["dist/", "node_modules/"]
+  },
+  "formatter": {
+    "ignore": ["dist/", "node_modules/"]
+  },
+  "linter": {
+    "ignore": ["dist/", "node_modules/"]
+  }
+}
