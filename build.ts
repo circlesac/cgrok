@@ -1,24 +1,24 @@
-#!/usr/bin/env bun
-
-// @ts-expect-error - Bun types
 import { build } from "bun"
+import packageJson from "./package.json" with { type: "json" }
 
-console.log("Building cgrok...")
+console.info("Building...")
+
+// Get external dependencies from package.json
+const external = Object.keys(packageJson.dependencies || {})
+console.info(`External dependencies: ${external.join(", ")}`)
 
 const result = await build({
 	entrypoints: ["src/main.ts"],
 	outdir: "dist",
 	target: "node",
 	format: "esm",
-	minify: false,
+	minify: true,
 	sourcemap: "external",
-	external: ["@tszen/trycatch", "@types/js-yaml", "chalk", "cloudflare", "commander", "inquirer", "js-yaml", "moment-timezone", "nanospinner", "tldts", "tty-table"],
-	preserveEntrySignatures: "strict"
+	external
 })
 
 if (result.success) {
-	console.log("Build successful!")
+	console.info("Build successful!")
 } else {
 	console.error("Build failed!")
-	process.exit(1)
 }
