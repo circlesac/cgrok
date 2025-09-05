@@ -1,6 +1,6 @@
 import { createHash } from "crypto"
-import TtyTable from "tty-table"
 import type { Header, Options } from "tty-table"
+import TtyTable from "tty-table"
 
 export class Table {
 	private data: (string[] | object)[] = []
@@ -49,7 +49,7 @@ export class Table {
 		const output = table.render()
 		const cleaned = this.clean(output)
 
-		console.log(cleaned)
+		console.info(cleaned)
 		this.lastRenderedLines = cleaned.split("\n").length
 	}
 

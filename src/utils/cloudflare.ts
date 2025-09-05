@@ -1,9 +1,9 @@
+import { Cloudflare } from "cloudflare"
 import { randomBytes } from "crypto"
 import { mkdirSync, writeFileSync } from "fs"
+import { dump } from "js-yaml"
 import { tmpdir } from "os"
 import { join } from "path"
-import { Cloudflare } from "cloudflare"
-import { dump } from "js-yaml"
 
 export interface TunnelCredentials {
 	AccountTag: string

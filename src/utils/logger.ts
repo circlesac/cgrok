@@ -1,7 +1,7 @@
+import chalk from "chalk"
 import { appendFileSync, existsSync, mkdirSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import chalk from "chalk"
 
 export class Logger {
 	private static instance: Logger
