@@ -49,14 +49,14 @@ class HttpCommand extends BaseCommand {
 		await this.launchCloudflared(configPath, domain.name)
 
 		// status
-		console.log()
-		console.log("🚀 Tunnel is active!")
+		console.info()
+		console.info("🚀 Tunnel is active!")
 
 		const table = new Table(2)
 		table.push(["Public URL", `https://${domain.name}`], ["Local URL", local_url], ["cloudflared Logs", logger.cloudflared.path])
 		await table.render()
 
-		console.log("\nPress Ctrl+C to stop the tunnel\n")
+		console.info("\nPress Ctrl+C to stop the tunnel\n")
 
 		// ctrl+c
 		let _signal = false
@@ -64,7 +64,7 @@ class HttpCommand extends BaseCommand {
 			if (_signal) return
 			_signal = true
 
-			console.log(`\nReceived ${signal}, shutting down...`)
+			console.info(`\nReceived ${signal}, shutting down...`)
 		}
 		process.on("SIGINT", signalHandler)
 		process.on("SIGTERM", signalHandler)

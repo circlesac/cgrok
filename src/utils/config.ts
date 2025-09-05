@@ -1,7 +1,7 @@
-import { homedir } from "os"
-import { join } from "path"
 import { $trycatch } from "@tszen/trycatch"
 import { access, mkdir, readFile, stat, writeFile } from "fs/promises"
+import { homedir } from "os"
+import { join } from "path"
 
 interface CgrokConfig {
 	auth_token: string
