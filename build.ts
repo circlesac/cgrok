@@ -12,7 +12,7 @@ const result = await build({
 	format: "esm",
 	minify: false,
 	sourcemap: "external",
-	external: ["commander", "cloudflare", "chalk", "inquirer"],
+	external: ["@tszen/trycatch", "@types/js-yaml", "chalk", "cloudflare", "commander", "inquirer", "js-yaml", "moment-timezone", "nanospinner", "tldts", "tty-table"],
 	preserveEntrySignatures: "strict"
 })
 
