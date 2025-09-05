@@ -1,6 +1,6 @@
 {
   "name": "@circlesac/cgrok",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "🚀 An ngrok-like CLI that uses Cloudflare for secure tunneling",
   "keywords": ["cli", "tunnel", "cloudflare", "ngrok", "proxy"],
@@ -43,6 +43,7 @@
   "devDependencies": {
     "@piondev/shared-configs": "^1.0.35",
     "@tsed/barrels": "^6.6.3",
+    "@types/bun": "^1.2.21",
     "@types/inquirer": "^9.0.9",
     "@types/moment-timezone": "^0.5.30",
     "@types/node": "^24.3.0",
