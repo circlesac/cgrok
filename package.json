@@ -1,6 +1,6 @@
 {
   "name": "@circlesac/cgrok",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "description": "🚀 An ngrok-like CLI that uses Cloudflare for secure tunneling",
   "keywords": [

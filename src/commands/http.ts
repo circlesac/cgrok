@@ -19,16 +19,17 @@ class HttpCommand extends BaseCommand {
 		this.description("Start HTTP tunnel")
 		this.argument("<address:port|port>", "Local endpoint: port (e.g., 8080) or address:port (e.g., localhost:3000)")
 		this.option("-u, --url <url>", "Custom tunnel URL (e.g., myapp.example.com)")
+		this.option("-f, --force", "Force overwrite DNS record even if it exists")
 	}
 
-	protected async execute(endpoint: string, options: { url?: string }) {
+	protected async execute(endpoint: string, options: { url?: string; force?: boolean }) {
 		// init
 		this.config = await Config.from().load()
 		this.cf = new Cloudflare({ apiToken: this.config.auth_token })
 		this.cfh = new CloudflareHelper(this.cf)
 
 		// options
-		const domain = options.url ? await this.getFullDomain(options.url) : await this.getEphemeralDomain()
+		const domain = options.url ? await this.getFullDomain(options.url, options.force) : await this.getEphemeralDomain(options.force)
 		const local_url = parseLocalUrl(endpoint)
 
 		// tunnel
@@ -42,7 +43,7 @@ class HttpCommand extends BaseCommand {
 		if (!tunnel_id || !tunnel_secret) throw new Error(`Failed to create tunnel ${domain.name}`)
 
 		// dns
-		await this.createDNSRecord(domain, tunnel_id)
+		await this.createDNSRecord(domain, tunnel_id, options.force)
 
 		// cloudflared
 		const configPath = createConfigFile(domain.name, local_url, tunnel_id, tunnel_secret, this.config.account_id)
@@ -117,20 +118,33 @@ class HttpCommand extends BaseCommand {
 		)
 	}
 
-	private async createDNSRecord(domain: { name: string; zone: { id: string } }, tunnel_id: string) {
+	private async createDNSRecord(domain: { name: string; zone: { id: string } }, tunnel_id: string, force?: boolean) {
 		await spinner(
 			async () => {
+				const content = `${tunnel_id}.cfargotunnel.com`
+				const ttl = 1 // Auto TTL
+				const proxied = true // Enable Cloudflare proxy for tunnel
+
+				// Try to update existing record first if force is enabled
+				if (force) {
+					const updated = await this.cfh.updateDNSRecord(domain.zone.id, domain.name, content, ttl, proxied)
+					if (updated) {
+						return // Record was successfully updated
+					}
+				}
+
+				// Create new record if no existing record was found or force is not enabled
 				await this.cf.dns.records.create({
 					zone_id: domain.zone.id,
 					type: "CNAME",
 					name: domain.name,
-					content: `${tunnel_id}.cfargotunnel.com`,
-					ttl: 1, // Auto TTL
-					proxied: true // Enable Cloudflare proxy for tunnel
+					content,
+					ttl,
+					proxied
 				})
 			},
 			{
-				text: `Creating DNS record '${domain.name}' → ${tunnel_id}.cfargotunnel.com`
+				text: force ? `Updating DNS record '${domain.name}' → ${tunnel_id}.cfargotunnel.com` : `Creating DNS record '${domain.name}' → ${tunnel_id}.cfargotunnel.com`
 			}
 		)
 	}
@@ -174,15 +188,15 @@ class HttpCommand extends BaseCommand {
 		return await (_this._cleanupPromise = task())
 	}
 
-	private async getEphemeralDomain() {
+	private async getEphemeralDomain(force?: boolean) {
 		for (let attempt = 1; attempt <= 5; attempt++) {
-			const result = await this.getFullDomain(generateEphemeralName())
+			const result = await this.getFullDomain(generateEphemeralName(), force)
 			if (result) return result
 		}
 		throw new Error("Failed to generate unique ephemeral domain after 5 attempts")
 	}
 
-	private async getFullDomain(value: string) {
+	private async getFullDomain(value: string, force?: boolean) {
 		// assume value is full domain
 		let domainName = value
 
@@ -205,7 +219,9 @@ class HttpCommand extends BaseCommand {
 				if (subdomain?.includes(".")) throw new Error("Subdomain cannot contain a dot")
 
 				const record = await this.cfh.getDNSRecord(zone.id, domainName)
-				if (record) throw new Error(`Domain ${domainName} already exists in DNS`)
+				if (record && !force) {
+					throw new Error(`Domain ${domainName} already exists in DNS`)
+				}
 
 				return { zone, name: domainName }
 			},

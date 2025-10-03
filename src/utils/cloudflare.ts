@@ -66,6 +66,29 @@ export class CloudflareHelper {
 			})
 		}
 	}
+
+	async updateDNSRecord(zone_id: string, hostname: string, content: string, ttl: number = 1, proxied: boolean = true) {
+		const records = await this.cf.dns.records.list({
+			zone_id,
+			name: {
+				exact: hostname
+			}
+		})
+
+		if (records.result && records.result.length > 0) {
+			const record = records.result[0]
+			await this.cf.dns.records.update(record.id, {
+				zone_id,
+				type: "CNAME",
+				name: hostname,
+				content,
+				ttl,
+				proxied
+			})
+			return true
+		}
+		return false
+	}
 }
 
 export function createConfigFile(tunnelName: string, localUrl: string, tunnelId: string, tunnelSecret: string, accountId: string) {
