@@ -20,9 +20,10 @@ class HttpCommand extends BaseCommand {
 		this.argument("<address:port|port>", "Local endpoint: port (e.g., 8080) or address:port (e.g., localhost:3000)")
 		this.option("-u, --url <url>", "Custom tunnel URL (e.g., myapp.example.com)")
 		this.option("-f, --force", "Force overwrite DNS record even if it exists")
+		this.option("--debug", "Enable debug logging")
 	}
 
-	protected async execute(endpoint: string, options: { url?: string; force?: boolean }) {
+	protected async execute(endpoint: string, options: { url?: string; force?: boolean; debug?: boolean }) {
 		// init
 		this.config = await Config.from().load()
 		this.cf = new Cloudflare({ apiToken: this.config.auth_token })
@@ -33,7 +34,7 @@ class HttpCommand extends BaseCommand {
 		const local_url = parseLocalUrl(endpoint)
 
 		// tunnel
-		let { tunnel_id, tunnel_secret } = await this.checkExistingTunnel(domain.name)
+		let { tunnel_id, tunnel_secret } = await this.checkExistingTunnel(domain.name, options.debug)
 
 		if (!tunnel_id) {
 			const newTunnel = await this.createNewTunnel(domain.name)
@@ -74,21 +75,72 @@ class HttpCommand extends BaseCommand {
 		process.stdin.resume()
 	}
 
-	private async checkExistingTunnel(domainName: string) {
+	private async checkExistingTunnel(domainName: string, debug?: boolean) {
+		if (debug) {
+			console.error("\n[DEBUG] Checking for existing tunnel:", domainName)
+		}
 		return await spinner(
 			async () => {
 				const tunnel = await this.cfh.tunnelByName(this.config.account_id, domainName)
+				if (debug) {
+					console.error("[DEBUG] Tunnel found:", tunnel ? `Yes (ID: ${tunnel.id})` : "No")
+				}
 				if (tunnel && tunnel.id) {
-					const tunnel_secret = await this.cf.zeroTrust.tunnels.cloudflared.token.get(tunnel.id, { account_id: this.config.account_id })
-					if (tunnel_secret) return { tunnel_id: tunnel.id, tunnel_secret }
-					else {
+					const tokenResponse = await this.cf.zeroTrust.tunnels.cloudflared.token.get(tunnel.id, { account_id: this.config.account_id })
+
+					// Debug logging - use console.error to bypass spinner
+					if (debug) {
+						console.error("\n[DEBUG] Token response type:", typeof tokenResponse)
+						console.error("[DEBUG] Token response:", JSON.stringify(tokenResponse, null, 2))
+						console.error("[DEBUG] Token response constructor:", tokenResponse?.constructor?.name)
+					}
+
+					// Extract token from response - could be string or object with token property
+					let tunnel_secret: string | undefined
+					if (typeof tokenResponse === "string") {
+						tunnel_secret = tokenResponse
+						if (debug) {
+							console.error("[DEBUG] Extracted secret (string):", tunnel_secret.substring(0, 20) + "...")
+						}
+					} else if (tokenResponse && typeof tokenResponse === "object") {
+						// Handle different possible response structures
+						// Check for common response formats: { token: "..." }, { result: "..." }, { result: { token: "..." } }
+						const response = tokenResponse as Record<string, unknown>
+						tunnel_secret = (response.token as string) || ((response.result as Record<string, unknown>)?.token as string) || (response.result as string)
+						if (debug) {
+							console.error("[DEBUG] Extracted secret (object):", tunnel_secret ? tunnel_secret.substring(0, 20) + "..." : "undefined")
+							console.error("[DEBUG] Response keys:", Object.keys(response))
+						}
+						// If still not found, try to stringify and use the whole object (fallback)
+						if (!tunnel_secret && typeof response.toString === "function") {
+							const str = String(tokenResponse)
+							if (str && str !== "[object Object]") {
+								tunnel_secret = str
+							}
+						}
+					}
+
+					// Validate that we got a valid secret (should be base64 string)
+					if (tunnel_secret && typeof tunnel_secret === "string" && tunnel_secret.length > 0) {
+						if (debug) {
+							console.error("[DEBUG] Final tunnel secret length:", tunnel_secret.length)
+							console.error("[DEBUG] Final tunnel secret (first 20 chars):", tunnel_secret.substring(0, 20))
+						}
+						return { tunnel_id: tunnel.id, tunnel_secret }
+					} else {
+						if (debug) {
+							console.error("[DEBUG] Failed to extract valid tunnel secret")
+						}
 						const msgs = [
 							`Could not get the tunnel token for '${domainName}' (ID: ${tunnel.id})\n`,
-							`You may need to delete the existing tunnel, run:`,
+							`The tunnel may have been created with a different configuration. You may need to delete the existing tunnel, run:`,
 							`  cloudflared tunnel delete ${tunnel.id}`
 						]
 						throw new Error(msgs.join("\n"))
 					}
+				}
+				if (debug) {
+					console.error("[DEBUG] No existing tunnel found, will create new one")
 				}
 				return { tunnel_id: undefined, tunnel_secret: undefined }
 			},
