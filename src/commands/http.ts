@@ -3,7 +3,7 @@ import { Cloudflare } from "cloudflare"
 import { parse } from "tldts"
 
 import { BaseCommand } from "@/utils/base"
-import { CloudflareHelper, createConfigFile, generateTunnelSecret } from "@/utils/cloudflare"
+import { CloudflareHelper, createConfigFile, generateTunnelSecret, getTunnelSecrets } from "@/utils/cloudflare"
 import { Config } from "@/utils/config"
 import { generateEphemeralName, parseLocalUrl, spinner } from "@/utils/helpers"
 import { logger } from "@/utils/logger"
@@ -13,6 +13,7 @@ class HttpCommand extends BaseCommand {
 	private config!: Config
 	private cf!: Cloudflare
 	private cfh!: CloudflareHelper
+	private tunnelSecrets!: ReturnType<typeof getTunnelSecrets>
 
 	constructor() {
 		super("http")
@@ -28,6 +29,7 @@ class HttpCommand extends BaseCommand {
 		this.config = await Config.from().load()
 		this.cf = new Cloudflare({ apiToken: this.config.auth_token })
 		this.cfh = new CloudflareHelper(this.cf)
+		this.tunnelSecrets = getTunnelSecrets()
 
 		// options
 		const domain = options.url ? await this.getFullDomain(options.url, options.force) : await this.getEphemeralDomain(options.force)
@@ -86,37 +88,48 @@ class HttpCommand extends BaseCommand {
 					console.error("[DEBUG] Tunnel found:", tunnel ? `Yes (ID: ${tunnel.id})` : "No")
 				}
 				if (tunnel && tunnel.id) {
-					const tokenResponse = await this.cf.zeroTrust.tunnels.cloudflared.token.get(tunnel.id, { account_id: this.config.account_id })
+					// First, try to get the secret from local storage
+					let tunnel_secret = await this.tunnelSecrets.getSecret(tunnel.id)
+					if (tunnel_secret) {
+						if (debug) {
+							console.error("[DEBUG] Retrieved tunnel secret from local storage")
+						}
+						return { tunnel_id: tunnel.id, tunnel_secret }
+					}
+
+					// If not found locally, get the token from Cloudflare API
+					const token = await this.cf.zeroTrust.tunnels.cloudflared.token.get(tunnel.id, { account_id: this.config.account_id })
 
 					// Debug logging - use console.error to bypass spinner
 					if (debug) {
-						console.error("\n[DEBUG] Token response type:", typeof tokenResponse)
-						console.error("[DEBUG] Token response:", JSON.stringify(tokenResponse, null, 2))
-						console.error("[DEBUG] Token response constructor:", tokenResponse?.constructor?.name)
+						console.error("\n[DEBUG] Token response type:", typeof token)
+						console.error("[DEBUG] Token response:", token)
 					}
 
-					// Extract token from response - could be string or object with token property
-					let tunnel_secret: string | undefined
-					if (typeof tokenResponse === "string") {
-						tunnel_secret = tokenResponse
+					// Decode the token to extract the tunnel secret
+					// The token is a base64-encoded JSON containing: { "a": account, "s": secret, "t": tunnel_id }
+					try {
+						// Decode base64 JSON directly (not a JWT, just base64-encoded JSON)
+						const decoded = JSON.parse(Buffer.from(token, "base64").toString("utf-8"))
+
 						if (debug) {
-							console.error("[DEBUG] Extracted secret (string):", tunnel_secret.substring(0, 20) + "...")
+							console.error("[DEBUG] Decoded token payload:", JSON.stringify(decoded, null, 2))
 						}
-					} else if (tokenResponse && typeof tokenResponse === "object") {
-						// Handle different possible response structures
-						// Check for common response formats: { token: "..." }, { result: "..." }, { result: { token: "..." } }
-						const response = tokenResponse as Record<string, unknown>
-						tunnel_secret = (response.token as string) || ((response.result as Record<string, unknown>)?.token as string) || (response.result as string)
+
+						// Extract the secret from the "s" field
+						tunnel_secret = decoded.s as string
+
 						if (debug) {
-							console.error("[DEBUG] Extracted secret (object):", tunnel_secret ? tunnel_secret.substring(0, 20) + "..." : "undefined")
-							console.error("[DEBUG] Response keys:", Object.keys(response))
+							console.error("[DEBUG] Extracted tunnel secret from token:", tunnel_secret ? tunnel_secret.substring(0, 20) + "..." : "undefined")
 						}
-						// If still not found, try to stringify and use the whole object (fallback)
-						if (!tunnel_secret && typeof response.toString === "function") {
-							const str = String(tokenResponse)
-							if (str && str !== "[object Object]") {
-								tunnel_secret = str
-							}
+
+						// Save the secret locally for future use
+						if (tunnel_secret) {
+							await this.tunnelSecrets.saveSecret(tunnel.id, tunnel_secret)
+						}
+					} catch (error) {
+						if (debug) {
+							console.error("[DEBUG] Failed to decode token:", error)
 						}
 					}
 
@@ -132,7 +145,7 @@ class HttpCommand extends BaseCommand {
 							console.error("[DEBUG] Failed to extract valid tunnel secret")
 						}
 						const msgs = [
-							`Could not get the tunnel token for '${domainName}' (ID: ${tunnel.id})\n`,
+							`Could not get the tunnel secret for '${domainName}' (ID: ${tunnel.id})\n`,
 							`The tunnel may have been created with a different configuration. You may need to delete the existing tunnel, run:`,
 							`  cloudflared tunnel delete ${tunnel.id}`
 						]
@@ -160,7 +173,11 @@ class HttpCommand extends BaseCommand {
 					config_src: "local",
 					tunnel_secret
 				})
-				if (tunnel.id) return { tunnel_id: tunnel.id, tunnel_secret }
+				if (tunnel.id) {
+					// Save the secret locally for future use
+					await this.tunnelSecrets.saveSecret(tunnel.id, tunnel_secret)
+					return { tunnel_id: tunnel.id, tunnel_secret }
+				}
 
 				return { tunnel_id: undefined, tunnel_secret }
 			},

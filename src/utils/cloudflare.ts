@@ -1,8 +1,10 @@
+import { $trycatch } from "@tszen/trycatch"
 import { Cloudflare } from "cloudflare"
 import { randomBytes } from "crypto"
 import { mkdirSync, writeFileSync } from "fs"
+import { access, mkdir, readFile, stat, writeFile } from "fs/promises"
 import { dump } from "js-yaml"
-import { tmpdir } from "os"
+import { homedir, tmpdir } from "os"
 import { join } from "path"
 
 export interface TunnelCredentials {
@@ -129,4 +131,69 @@ export function createConfigFile(tunnelName: string, localUrl: string, tunnelId:
 
 export function generateTunnelSecret() {
 	return randomBytes(32).toString("base64")
+}
+
+// Tunnel secrets storage - stores tunnel_id -> tunnel_secret mappings locally
+class TunnelSecrets {
+	private secretsFilePath: string
+	private configDir: string
+
+	constructor(configDir: string = join(homedir(), ".config", "cgrok")) {
+		this.configDir = configDir
+		this.secretsFilePath = join(configDir, "tunnel-secrets.json")
+	}
+
+	private async ensureDir() {
+		try {
+			const stats = await stat(this.configDir)
+			if (!stats.isDirectory()) {
+				throw new Error(`Path ${this.configDir} exists but is not a directory`)
+			}
+		} catch {
+			await mkdir(this.configDir, { recursive: true })
+		}
+	}
+
+	async getSecret(tunnelId: string): Promise<string | undefined> {
+		const [, accessError] = await $trycatch(async () => await access(this.secretsFilePath))
+		if (accessError) {
+			return
+		}
+
+		const [data, readError] = await $trycatch(async () => await readFile(this.secretsFilePath, "utf-8"))
+		if (readError) {
+			return
+		}
+
+		const [secrets, parseError] = await $trycatch(() => JSON.parse(data))
+		if (parseError) {
+			return
+		}
+
+		return secrets[tunnelId] as string | undefined
+	}
+
+	async saveSecret(tunnelId: string, tunnelSecret: string) {
+		await this.ensureDir()
+
+		let secrets: Record<string, string> = {}
+		const [, accessError] = await $trycatch(async () => await access(this.secretsFilePath))
+		if (!accessError) {
+			const [data, readError] = await $trycatch(async () => await readFile(this.secretsFilePath, "utf-8"))
+			if (!readError) {
+				const [parsed, parseError] = await $trycatch(() => JSON.parse(data))
+				if (!parseError) {
+					secrets = parsed
+				}
+			}
+		}
+
+		secrets[tunnelId] = tunnelSecret
+
+		await writeFile(this.secretsFilePath, JSON.stringify(secrets, null, 2))
+	}
+}
+
+export function getTunnelSecrets(configDir?: string) {
+	return new TunnelSecrets(configDir)
 }
