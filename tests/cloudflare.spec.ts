@@ -67,10 +67,9 @@ describe("Cloudflare", () => {
 			const tunnelSecret = generateTunnelSecret()
 			const configPath = await createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
 
-			// Read credentials path from config file
+			// Read credentials path from config file — js-yaml uses inline or >- multiline depending on path length
 			const configContent = await fs.readFile(configPath, "utf-8")
-			// Handle YAML multiline format: credentials-file: >-\n  /path/to/file
-			const credentialsPathMatch = configContent.match(/credentials-file:\s*>-?\s*\n\s*(.+)/)
+			const credentialsPathMatch = configContent.match(/credentials-file:\s*>-?\s*\n\s*(.+)/) || configContent.match(/credentials-file:\s*(\/.+)/)
 			expect(credentialsPathMatch).toBeTruthy()
 
 			const credentialsPath = credentialsPathMatch![1].trim()
