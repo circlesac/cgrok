@@ -72,7 +72,7 @@ jobs:
 
       - name: Build binary
         run: |
-          bun build --compile --target=${{ matrix.target }} --outfile=cgrok src/main.ts
+          bun build --compile --target=${{ matrix.target }} --external react-devtools-core --outfile=cgrok src/main.ts
           tar czf ${{ matrix.name }}.tar.gz cgrok
 
       - uses: actions/upload-artifact@v4
