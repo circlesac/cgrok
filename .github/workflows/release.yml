@@ -72,7 +72,10 @@ jobs:
 
       - name: Build binary
         run: |
-          bun build --compile --target=${{ matrix.target }} --external react-devtools-core --outfile=cgrok src/main.ts
+          mkdir -p node_modules/react-devtools-core
+          echo '{"main":"index.js"}' > node_modules/react-devtools-core/package.json
+          echo 'export default {initialize(){},connectToDevTools(){}}' > node_modules/react-devtools-core/index.js
+          bun build --compile --target=${{ matrix.target }} --outfile=cgrok src/main.ts
           tar czf ${{ matrix.name }}.tar.gz cgrok
 
       - uses: actions/upload-artifact@v4
