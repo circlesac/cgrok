@@ -1,0 +1,11 @@
+{
+  "name": "cgrok",
+  "owner": { "name": "Circles Inc." },
+  "plugins": [
+    {
+      "name": "cgrok",
+      "source": "./",
+      "description": "Set up and use cgrok for Cloudflare-based secure tunneling to local development servers"
+    }
+  ]
+}

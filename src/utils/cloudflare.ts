@@ -1,7 +1,6 @@
 import { $trycatch } from "@tszen/trycatch"
 import { Cloudflare } from "cloudflare"
 import { randomBytes } from "crypto"
-import { mkdirSync, writeFileSync } from "fs"
 import { access, mkdir, readFile, stat, writeFile } from "fs/promises"
 import { dump } from "js-yaml"
 import { homedir, tmpdir } from "os"
@@ -93,10 +92,10 @@ export class CloudflareHelper {
 	}
 }
 
-export function createConfigFile(tunnelName: string, localUrl: string, tunnelId: string, tunnelSecret: string, accountId: string) {
+export async function createConfigFile(tunnelName: string, localUrl: string, tunnelId: string, tunnelSecret: string, accountId: string) {
 	// tmp
 	const tempDir = join(tmpdir(), `cgrok-${tunnelId}`)
-	mkdirSync(tempDir, { recursive: true })
+	await mkdir(tempDir, { recursive: true })
 
 	// credentials file
 	const credentialsPath = join(tempDir, `${tunnelId}.json`)
@@ -105,7 +104,7 @@ export function createConfigFile(tunnelName: string, localUrl: string, tunnelId:
 		TunnelSecret: tunnelSecret,
 		TunnelID: tunnelId
 	}
-	writeFileSync(credentialsPath, JSON.stringify(credentials, null, 2))
+	await writeFile(credentialsPath, JSON.stringify(credentials, null, 2))
 
 	// config file
 	const configPath = join(tempDir, `${tunnelName}.yml`)
@@ -124,7 +123,7 @@ export function createConfigFile(tunnelName: string, localUrl: string, tunnelId:
 	}
 
 	const configContent = dump(configData)
-	writeFileSync(configPath, configContent)
+	await writeFile(configPath, configContent)
 
 	return configPath
 }

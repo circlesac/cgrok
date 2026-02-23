@@ -1,7 +1,5 @@
 import { Command } from "commander"
 
-import { logger } from "./logger"
-
 export abstract class BaseCommand extends Command {
 	constructor(name: string) {
 		super(name)
@@ -12,34 +10,10 @@ export abstract class BaseCommand extends Command {
 		try {
 			await this.execute(...args)
 		} catch (error) {
-			this.logError(error)
+			const message = error instanceof Error ? error.message : String(error)
+			process.stderr.write(`\nFatal error: ${message}\n`)
+			process.exit(1)
 		}
-	}
-
-	private logError(...errors: unknown[]) {
-		console.error()
-
-		for (const error of errors) {
-			if (error instanceof Error) {
-				logger.error("Error", error.message)
-
-				if (error.stack) {
-					console.error()
-					logger.error("Stack trace", error.stack)
-				}
-
-				if (error.cause) {
-					console.error()
-					logger.error("Caused by", String(error.cause))
-				}
-			} else {
-				logger.error("Message", String(error))
-			}
-		}
-
-		console.error()
-		logger.error("Command", this.name())
-		logger.error("Time", Date.now().toString())
 	}
 
 	protected abstract execute(...args: unknown[]): Promise<void> | void

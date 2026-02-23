@@ -1,0 +1,8 @@
+{
+  "name": "cgrok",
+  "description": "Set up and use cgrok for Cloudflare-based secure tunneling to local development servers",
+  "author": {
+    "name": "Circles Inc.",
+    "url": "https://github.com/circlesac"
+  }
+}

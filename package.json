@@ -1,6 +1,6 @@
 {
   "name": "@circlesac/cgrok",
-  "version": "0.0.6",
+  "version": "26.2.0",
   "type": "module",
   "description": "🚀 An ngrok-like CLI that uses Cloudflare for secure tunneling",
   "keywords": [
@@ -15,7 +15,8 @@
     "cgrok": "dist/main.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "private": false,
   "publishConfig": {
@@ -30,30 +31,38 @@
     "version:patch": "npm version patch",
     "version:minor": "npm version minor",
     "version:major": "npm version major",
+    "deploy": "npm publish --access public",
     "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@tszen/trycatch": "^0.1.0",
-    "@types/js-yaml": "^4.0.9",
-    "chalk": "^5.6.0",
     "cloudflare": "^4.5.0",
     "commander": "^14.0.0",
-    "inquirer": "^12.9.4",
+    "ink": "^6.7.0",
+    "ink-select-input": "^6.2.0",
+    "ink-spinner": "^5.0.0",
     "js-yaml": "^4.1.0",
     "moment-timezone": "^0.6.0",
-    "nanospinner": "^1.2.2",
-    "tldts": "^7.0.12",
-    "tty-table": "^4.2.3"
+    "react": "^19.2.4",
+    "tldts": "^7.0.12"
   },
   "devDependencies": {
     "@tsed/barrels": "^6.6.3",
     "@types/bun": "^1.2.21",
-    "@types/inquirer": "^9.0.9",
+    "@types/js-yaml": "^4.0.9",
     "@types/moment-timezone": "^0.5.30",
     "@types/node": "^24.3.0",
+    "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "3.2.4",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/circlesac/cgrok"
+  },
+  "pi": {
+    "skills": ["./skills"]
   },
   "license": "MIT"
 }

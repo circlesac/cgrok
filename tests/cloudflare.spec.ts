@@ -1,7 +1,6 @@
 import { promises as fs } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { createConfigFile, generateTunnelSecret } from "@/utils/cloudflare"
 
@@ -31,7 +30,7 @@ describe("Cloudflare", () => {
 	describe("createConfigFile", () => {
 		it("should create config and credentials files in temp directory", async () => {
 			const tunnelSecret = generateTunnelSecret()
-			const configPath = createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
+			const configPath = await createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
 
 			// Verify config file exists
 			expect(
@@ -52,7 +51,7 @@ describe("Cloudflare", () => {
 
 		it("should create valid YAML config file", async () => {
 			const tunnelSecret = generateTunnelSecret()
-			const configPath = createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
+			const configPath = await createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
 
 			const configContent = await fs.readFile(configPath, "utf-8")
 
@@ -66,7 +65,7 @@ describe("Cloudflare", () => {
 
 		it("should create valid JSON credentials file", async () => {
 			const tunnelSecret = generateTunnelSecret()
-			const configPath = createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
+			const configPath = await createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
 
 			// Read credentials path from config file
 			const configContent = await fs.readFile(configPath, "utf-8")
@@ -87,7 +86,7 @@ describe("Cloudflare", () => {
 
 		it("should use full paths for credentials-file in config", async () => {
 			const tunnelSecret = generateTunnelSecret()
-			const configPath = createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
+			const configPath = await createConfigFile(testTunnelName, testLocalUrl, testTunnelId, tunnelSecret, testAccountId)
 
 			const configContent = await fs.readFile(configPath, "utf-8")
 			expect(configContent).toContain(`cgrok-${testTunnelId}`)
@@ -100,9 +99,9 @@ describe("Cloudflare", () => {
 			const tunnelId1 = "tunnel-1"
 			const tunnelId2 = "tunnel-2"
 
-			const configPath1 = createConfigFile("tunnel1", testLocalUrl, tunnelId1, tunnelSecret1, testAccountId)
+			const configPath1 = await createConfigFile("tunnel1", testLocalUrl, tunnelId1, tunnelSecret1, testAccountId)
 
-			const configPath2 = createConfigFile("tunnel2", testLocalUrl, tunnelId2, tunnelSecret2, testAccountId)
+			const configPath2 = await createConfigFile("tunnel2", testLocalUrl, tunnelId2, tunnelSecret2, testAccountId)
 
 			expect(configPath1).toContain(`cgrok-${tunnelId1}`)
 			expect(configPath2).toContain(`cgrok-${tunnelId2}`)
