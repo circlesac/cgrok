@@ -1,15 +1,12 @@
-export function generateEphemeralName() {
-	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	let result = ""
-	for (let i = 0; i < 12; i++) {
-		result += chars.charAt(Math.floor(Math.random() * chars.length))
-	}
-	return result
-}
-
 export function parseLocalUrl(value: string) {
-	let host
-	let port
+	// Support full URLs: https://localhost:8443, http://servername:3000
+	if (value.startsWith("http://") || value.startsWith("https://")) {
+		new URL(value) // validate
+		return value
+	}
+
+	let host: string
+	let port: number
 
 	if (value.includes(":")) {
 		const [_host, _port] = value.split(":")

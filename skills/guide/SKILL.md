@@ -25,10 +25,12 @@ curl -fsSL https://github.com/circlesac/cgrok/releases/latest/download/install.s
 ## Prerequisites
 
 You need a Cloudflare account with:
+
 1. An API token (create at https://dash.cloudflare.com/profile/api-tokens)
 2. At least one zone (domain) configured in Cloudflare
 
 The API token needs permissions for:
+
 - Zone DNS Edit
 - Account Cloudflare Tunnel Edit
 - Zone Zone Read

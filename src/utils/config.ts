@@ -1,103 +1,119 @@
-import { $trycatch } from "@tszen/trycatch"
-import { access, mkdir, readFile, stat, writeFile } from "fs/promises"
-import { homedir } from "os"
+import { execSync } from "child_process"
+import { mkdirSync, readFileSync, writeFileSync } from "fs"
+import { hostname } from "os"
 import { join } from "path"
 
-interface CgrokConfig {
-	auth_token: string
-	account_id: string
-	zone_id: string
+export interface Config {
+	apiToken: string
+	accountId: string
+	tunnelName: string
+	cloudflaredDir: string
 }
 
-export class Config {
-	auth_token!: string
-	account_id!: string
-	zone_id!: string
+const DEFAULT_CONFIG_DIR = join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".config", "cgrok")
 
-	private constructor(public configDir: string) {}
+export function loadConfig(configDir?: string): Config {
+	const cgrokConfigDir = configDir ?? DEFAULT_CONFIG_DIR
+	const configFile = join(cgrokConfigDir, "config.json")
+	const cloudflaredDir = join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".cloudflared")
 
-	private get configFilePath() {
-		return join(this.configDir, "cgrok.json")
+	// Check cloudflared is installed
+	try {
+		execSync("which cloudflared", { stdio: "ignore" })
+	} catch {
+		const platform = process.platform
+		const installCmd =
+			platform === "darwin"
+				? "brew install cloudflared"
+				: platform === "linux"
+					? "sudo apt install cloudflared  # or: sudo yum install cloudflared"
+					: "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+		throw new Error(`cloudflared is not installed.\nInstall it with:\n  ${installCmd}`)
 	}
 
-	// Static factory method - returns load and save functions
-	static from(configDir: string = join(homedir(), ".config", "cgrok")) {
-		return {
-			async load() {
-				const config = new Config(configDir)
-				await config.load()
-				return config
-			},
-			async save(value: CgrokConfig) {
-				const config = new Config(configDir)
-				config.auth_token = value.auth_token
-				config.account_id = value.account_id
-				config.zone_id = value.zone_id
-				await config.save()
-				return config
-			}
-		}
-	}
-
-	// Save config to file
-	async save() {
-		// Ensure directory exists before saving
-		try {
-			const stats = await stat(this.configDir)
-			if (!stats.isDirectory()) {
-				throw new Error(`Path ${this.configDir} exists but is not a directory`)
-			}
-		} catch {
-			// Path doesn't exist, create it
-			await mkdir(this.configDir, { recursive: true })
-		}
-
-		await writeFile(
-			this.configFilePath,
-			JSON.stringify(
-				{
-					auth_token: this.auth_token,
-					account_id: this.account_id,
-					zone_id: this.zone_id
-				},
-				null,
-				2
-			)
+	// Read config
+	let configData: { apiToken: string; accountId: string }
+	try {
+		configData = JSON.parse(readFileSync(configFile, "utf-8"))
+	} catch {
+		throw new Error(
+			`cgrok is not configured.\nRun 'cgrok config add-authtoken <TOKEN>' to set up.\nCreate a token at https://dash.cloudflare.com/profile/api-tokens with:\n  - Zone > DNS > Edit\n  - Account > Cloudflare Tunnel > Edit\n  - Zone > Zone > Read`
 		)
 	}
 
-	// Private method to load config from file
-	private async load() {
-		// Check if file exists
-		const [, accessError] = await $trycatch(async () => await access(this.configFilePath))
-		if (accessError) {
-			throw new Error(`Configuration file not found at: ${this.configFilePath}\nPlease run 'cgrok config add-authtoken <token>' to create a new configuration.`)
-		}
-
-		// Read file content
-		const [configData, readError] = await $trycatch(async () => await readFile(this.configFilePath, "utf-8"))
-		if (readError) {
-			throw new Error(`Failed to read configuration file: ${this.configFilePath}\nThis could be due to permission issues or the file being locked.`)
-		}
-
-		// Parse JSON
-		const [loadedConfig, parseError] = await $trycatch(() => JSON.parse(configData))
-		if (parseError) {
-			throw new Error(`Failed to parse configuration file: ${this.configFilePath}\nThe file appears to contain invalid JSON. Please check the file format.`)
-		}
-
-		const { auth_token, account_id, zone_id } = loadedConfig
-
-		// Validate required fields
-		if (!auth_token || !account_id || !zone_id) {
-			throw new Error(
-				`Configuration file is missing required fields: ${this.configFilePath}\nPlease run 'cgrok config add-authtoken <token>' to create a valid configuration.`
-			)
-		}
-
-		// Set properties
-		this.auth_token = auth_token
-		this.account_id = account_id
-		this.zone_id = zone_id
+	if (!configData.apiToken || !configData.accountId) {
+		throw new Error(`Invalid configuration.\nRun 'cgrok config add-authtoken <TOKEN>' to reconfigure.`)
 	}
+
+	return {
+		apiToken: configData.apiToken,
+		accountId: configData.accountId,
+		tunnelName: `cgrok-${hostname()}`,
+		cloudflaredDir
+	}
+}
+
+/**
+ * Save API token after validating permissions.
+ * Checks Zone > DNS > Edit, Account > Cloudflare Tunnel > Edit, Zone > Zone > Read.
+ */
+export async function saveAuthToken(token: string, accountIdArg?: string, configDir?: string) {
+	const dir = configDir ?? DEFAULT_CONFIG_DIR
+	const configFile = join(dir, "config.json")
+
+	// Verify token can list zones (Zone > Zone > Read)
+	const zonesRes = await fetch("https://api.cloudflare.com/client/v4/zones", {
+		headers: { Authorization: `Bearer ${token}` }
+	})
+	const zonesData = (await zonesRes.json()) as { success: boolean; result?: Array<{ id: string; name: string }> }
+
+	if (!zonesData.success || !zonesData.result?.length) {
+		throw new Error("Invalid token: cannot list zones.\nMake sure the token has Zone > Zone > Read permission.")
+	}
+
+	// Verify DNS permission (Zone > DNS > Edit)
+	const zoneId = zonesData.result[0].id
+	const dnsRes = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?per_page=1`, {
+		headers: { Authorization: `Bearer ${token}` }
+	})
+	const dnsData = (await dnsRes.json()) as { success: boolean }
+
+	if (!dnsData.success) {
+		throw new Error("Invalid token: cannot manage DNS records.\nMake sure the token has Zone > DNS > Edit permission.")
+	}
+
+	// Verify tunnel permission (Account > Cloudflare Tunnel > Edit)
+	// Get account ID from zones
+	const accountsRes = await fetch("https://api.cloudflare.com/client/v4/accounts", {
+		headers: { Authorization: `Bearer ${token}` }
+	})
+	const accountsData = (await accountsRes.json()) as { success: boolean; result?: Array<{ id: string; name: string }> }
+
+	if (!accountsData.success || !accountsData.result?.length) {
+		throw new Error("Invalid token: cannot list accounts.\nMake sure the token has Account > Cloudflare Tunnel > Edit permission.")
+	}
+
+	if (!accountIdArg) {
+		throw new Error("--account is required.")
+	}
+
+	const match = accountsData.result.find((a) => a.id === accountIdArg || a.name === accountIdArg)
+	if (!match) {
+		const available = accountsData.result.map((a) => `  - ${a.name} (${a.id})`).join("\n")
+		throw new Error(`Account '${accountIdArg}' not found.\nAvailable accounts:\n${available}`)
+	}
+	const accountId = match.id
+
+	const tunnelRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel?per_page=1`, {
+		headers: { Authorization: `Bearer ${token}` }
+	})
+	const tunnelData = (await tunnelRes.json()) as { success: boolean }
+
+	if (!tunnelData.success) {
+		throw new Error("Invalid token: cannot manage tunnels.\nMake sure the token has Account > Cloudflare Tunnel > Edit permission.")
+	}
+
+	// Save
+	mkdirSync(dir, { recursive: true })
+	writeFileSync(configFile, JSON.stringify({ apiToken: token, accountId }, null, 2))
 }

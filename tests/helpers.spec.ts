@@ -1,21 +1,4 @@
-import { generateEphemeralName, parseLocalUrl } from "@/utils/helpers"
-
-describe("generateEphemeralName", () => {
-	it("should return a 12-character string", () => {
-		const name = generateEphemeralName()
-		expect(name).toHaveLength(12)
-	})
-
-	it("should only contain lowercase alphanumeric characters", () => {
-		const name = generateEphemeralName()
-		expect(name).toMatch(/^[a-z0-9]+$/)
-	})
-
-	it("should generate unique names", () => {
-		const names = new Set(Array.from({ length: 10 }, () => generateEphemeralName()))
-		expect(names.size).toBe(10)
-	})
-})
+import { parseLocalUrl } from "@/utils/helpers"
 
 describe("parseLocalUrl", () => {
 	it("should parse a port number", () => {
@@ -48,5 +31,21 @@ describe("parseLocalUrl", () => {
 
 	it("should accept port 65535", () => {
 		expect(parseLocalUrl("65535")).toBe("http://localhost:65535")
+	})
+
+	it("should accept http:// URL", () => {
+		expect(parseLocalUrl("http://localhost:3000")).toBe("http://localhost:3000")
+	})
+
+	it("should accept https:// URL", () => {
+		expect(parseLocalUrl("https://localhost:8443")).toBe("https://localhost:8443")
+	})
+
+	it("should accept https:// URL with hostname", () => {
+		expect(parseLocalUrl("https://servername.local:9000")).toBe("https://servername.local:9000")
+	})
+
+	it("should throw on invalid URL", () => {
+		expect(() => parseLocalUrl("http://")).toThrow()
 	})
 })

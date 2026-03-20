@@ -15,7 +15,7 @@ export interface LogEntry {
 export type ConnectionStatus = "starting" | "connected" | "disconnected" | "restarting"
 
 interface UseCloudflaredOptions {
-	configPath: string
+	tunnelToken: string
 	enabled: boolean
 }
 
@@ -25,7 +25,6 @@ function parseLogLine(raw: string): LogEntry | undefined {
 	const trimmed = raw.trim()
 	if (!trimmed) return
 
-	// cloudflared format: 2024-01-01T12:00:00Z INF message key=value
 	const match = trimmed.match(/^(\S+)\s+(INF|ERR|WRN|DBG)\s+(.+)$/)
 	if (match) {
 		const [, timestamp, level, message] = match
@@ -46,7 +45,7 @@ function detectConnectionStatus(line: string): ConnectionStatus | undefined {
 
 const MAX_RESTART_DELAY = 30000
 
-export function useCloudflared({ configPath, enabled }: UseCloudflaredOptions) {
+export function useCloudflared({ tunnelToken, enabled }: UseCloudflaredOptions) {
 	const [logs, setLogs] = useState<LogEntry[]>([])
 	const [status, setStatus] = useState<ConnectionStatus>("starting")
 	const [restartCount, setRestartCount] = useState(0)
@@ -80,7 +79,6 @@ export function useCloudflared({ configPath, enabled }: UseCloudflaredOptions) {
 				const connectionChange = detectConnectionStatus(entry.raw)
 				if (connectionChange) {
 					setStatus(connectionChange)
-					// Reset backoff on successful connection
 					if (connectionChange === "connected") {
 						restartCountRef.current = 0
 						setRestartCount(0)
@@ -92,7 +90,8 @@ export function useCloudflared({ configPath, enabled }: UseCloudflaredOptions) {
 		function spawnProcess() {
 			setStatus("starting")
 
-			const args = ["tunnel", "--loglevel", "debug", "--config", configPath, "run"]
+			// Use --token for remotely-managed tunnels (config_src: "cloudflare")
+			const args = ["tunnel", "--no-autoupdate", "run", "--token", tunnelToken]
 			const child = spawn("cloudflared", args)
 			childRef.current = child
 
@@ -129,7 +128,7 @@ export function useCloudflared({ configPath, enabled }: UseCloudflaredOptions) {
 				childRef.current = undefined
 			}
 		}
-	}, [configPath, enabled])
+	}, [tunnelToken, enabled])
 
 	return { logs, status, restartCount, stop }
 }

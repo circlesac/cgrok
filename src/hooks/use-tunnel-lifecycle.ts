@@ -1,12 +1,9 @@
-import { Cloudflare } from "cloudflare"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { parse } from "tldts"
+import { TunnelManager } from "@/utils/cloudflare"
+import { loadConfig } from "@/utils/config"
+import { parseLocalUrl } from "@/utils/helpers"
 
-import { CloudflareHelper, createConfigFile, generateTunnelSecret, getTunnelSecrets } from "@/utils/cloudflare"
-import { Config } from "@/utils/config"
-import { generateEphemeralName, parseLocalUrl } from "@/utils/helpers"
-
-export type Phase = "init" | "domain" | "check-tunnel" | "create-tunnel" | "dns" | "launch" | "active" | "cleanup-dns" | "cleanup-tunnel" | "done" | "error"
+export type Phase = "init" | "tunnel" | "dns" | "ingress" | "launch" | "active" | "cleanup" | "done" | "error"
 
 interface Step {
 	label: string
@@ -16,10 +13,10 @@ interface Step {
 export interface TunnelState {
 	phase: Phase
 	phaseLabel: string
-	domain?: string
+	hostname?: string
 	localUrl?: string
-	logPath?: string
-	configPath?: string
+	tunnelId?: string
+	tunnelToken?: string
 	error?: Error
 	completedSteps: Step[]
 }
@@ -55,7 +52,6 @@ export function useTunnelLifecycle({ endpoint, url, force, debug }: TunnelLifecy
 		setState((prev) => ({ ...prev, phase: "error" as Phase, error }))
 	}, [])
 
-	// Cleanup function exposed for SIGINT handling
 	const cleanup = useCallback(async () => {
 		if (cleanupRef.current) {
 			await cleanupRef.current()
@@ -67,101 +63,83 @@ export function useTunnelLifecycle({ endpoint, url, force, debug }: TunnelLifecy
 
 		async function run() {
 			try {
-				// Init
-				const config = await Config.from().load()
-				const cf = new Cloudflare({ apiToken: config.auth_token })
-				const cfh = new CloudflareHelper(cf)
-				const tunnelSecrets = getTunnelSecrets()
+				// Init — load config from cert.pem
+				const config = loadConfig()
+				const tm = new TunnelManager(config)
 				const localUrl = parseLocalUrl(endpoint)
 
 				if (cancelled) return
 
-				// Domain resolution
-				setPhase("domain", "Checking domain availability")
-				let domain: { zone: { id: string; name: string }; name: string }
+				// Ensure singleton tunnel exists
+				setPhase("tunnel", `Ensuring tunnel '${config.tunnelName}'`)
+				const tunnelId = await tm.ensureTunnel()
+				if (cancelled) return
+				addStep(`Tunnel '${config.tunnelName}' ready`, true)
 
-				if (url) {
-					domain = await resolveFullDomain(cf, cfh, config, url, force)
-				} else {
-					domain = await resolveEphemeralDomain(cf, cfh, config, force)
+				// Clean stale ingress from previous crashes
+				const stale = await tm.cleanStaleIngress(tunnelId)
+				if (stale.length > 0) {
+					addStep(`Cleaned ${stale.length} stale ingress rule(s)`, true)
 				}
 
-				if (cancelled) return
-				addStep(`Domain '${domain.name}' resolved`, true)
-
-				// Check existing tunnel
-				setPhase("check-tunnel", `Checking if tunnel '${domain.name}' is available`)
-				let tunnel_id: string | undefined
-				let tunnel_secret: string | undefined
-
-				const existing = await checkExistingTunnel(cf, cfh, config, tunnelSecrets, domain.name)
-				tunnel_id = existing.tunnel_id
-				tunnel_secret = existing.tunnel_secret
-
+				// Resolve domain
+				const { hostname, zoneId } = await tm.resolveDomain(url, force)
 				if (cancelled) return
 
-				if (tunnel_id) {
-					addStep(`Existing tunnel found`, true)
-				} else {
-					addStep(`No existing tunnel`, true)
-
-					// Create new tunnel
-					setPhase("create-tunnel", `Creating tunnel '${domain.name}'`)
-					const newTunnel = await createNewTunnel(cf, config, tunnelSecrets, domain.name)
-					tunnel_id = newTunnel.tunnel_id
-					tunnel_secret = newTunnel.tunnel_secret
-
-					if (cancelled) return
-					addStep(`Tunnel '${domain.name}' created`, true)
-				}
-
-				if (!tunnel_id || !tunnel_secret) {
-					throw new Error(`Failed to create tunnel ${domain.name}`)
-				}
-
-				// DNS
-				setPhase("dns", force ? `Updating DNS record '${domain.name}'` : `Creating DNS record '${domain.name}'`)
-				await createDNSRecord(cf, cfh, domain, tunnel_id, force)
-
+				// Create DNS record
+				setPhase("dns", `Setting up DNS for '${hostname}'`)
+				await tm.createDNS(tunnelId, hostname, zoneId, force)
 				if (cancelled) return
-				addStep(`DNS record configured`, true)
+				addStep(`DNS record '${hostname}' configured`, true)
 
-				// Create config file and transition to active
-				const configPath = await createConfigFile(domain.name, localUrl, tunnel_id, tunnel_secret, config.account_id)
+				// Add ingress rule via API
+				setPhase("ingress", `Adding ingress rule for '${hostname}'`)
+				await tm.addIngress(tunnelId, hostname, localUrl)
+				if (cancelled) return
+				addStep(`Ingress rule added`, true)
 
-				// Register cleanup function
+				// Get tunnel token for cloudflared
+				const token = await tm.cloudflare.zeroTrust.tunnels.cloudflared.token.get(tunnelId, {
+					account_id: config.accountId
+				})
+
+				// Register cleanup
 				cleanupRef.current = async () => {
-					setState((prev) => ({ ...prev, phase: "cleanup-dns", phaseLabel: `Removing DNS record: ${domain.name}` }))
+					setState((prev) => ({ ...prev, phase: "cleanup", phaseLabel: "Cleaning up..." }))
+
 					try {
-						await cfh.removeDNSRecord(config.zone_id, domain.name)
-						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: `DNS record removed`, success: true }] }))
+						await tm.removeIngress(tunnelId, hostname)
+						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: "Ingress rule removed", success: true }] }))
 					} catch {
-						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: `Failed to remove DNS record`, success: false }] }))
+						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: "Failed to remove ingress rule", success: false }] }))
 					}
 
-					setState((prev) => ({ ...prev, phase: "cleanup-tunnel", phaseLabel: `Removing tunnel: ${domain.name}` }))
 					try {
-						const tunnels = await cf.zeroTrust.tunnels.cloudflared.list({ account_id: config.account_id, is_deleted: false })
-						const tunnel = tunnels.result.find((t) => t.name === domain.name)
-						if (tunnel && tunnel.id) {
-							await cf.zeroTrust.tunnels.cloudflared.delete(tunnel.id, { account_id: config.account_id })
-						}
-						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: `Tunnel removed`, success: true }] }))
+						await tm.removeDNS(hostname, zoneId)
+						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: "DNS record removed", success: true }] }))
 					} catch {
-						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: `Failed to remove tunnel`, success: false }] }))
+						setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: "Failed to remove DNS record", success: false }] }))
 					}
 
-					setState((prev) => ({ ...prev, phase: "done" }))
+					// Check if any ingress rules remain
+					const remaining = await tm.getIngress(tunnelId)
+					setState((prev) => ({
+						...prev,
+						phase: "done",
+						// Signal to stop cloudflared if no ingress rules remain
+						phaseLabel: remaining.length === 0 ? "stop-cloudflared" : ""
+					}))
 				}
 
-				// Transition to active - cloudflared managed by useCloudflared hook
+				// Transition to active
 				setState((prev) => ({
 					...prev,
 					phase: "active",
 					phaseLabel: "",
-					domain: domain.name,
+					hostname,
 					localUrl,
-					configPath
+					tunnelId,
+					tunnelToken: token as string
 				}))
 			} catch (error) {
 				if (!cancelled) {
@@ -178,112 +156,4 @@ export function useTunnelLifecycle({ endpoint, url, force, debug }: TunnelLifecy
 	}, [endpoint, url, force, debug, addStep, setPhase, setError])
 
 	return { ...state, cleanup }
-}
-
-// --- Business logic functions (extracted from HttpCommand) ---
-
-async function resolveFullDomain(cf: Cloudflare, cfh: CloudflareHelper, config: Config, value: string, force?: boolean) {
-	let domainName = value
-	const zones = await cf.zones.list()
-	let zone = zones.result.find((z) => value.endsWith(`.${z.name}`) || value === z.name)
-
-	if (!zone) {
-		zone = zones.result.find((z) => z.id === config.zone_id)
-		if (!zone) throw new Error(`Cloudflare zone '${config.zone_id}' not found`)
-		domainName = `${value}.${zone.name}`
-	}
-
-	const { subdomain } = parse(domainName)
-	if (subdomain?.includes(".")) throw new Error("Subdomain cannot contain a dot")
-
-	const record = await cfh.getDNSRecord(zone.id, domainName)
-	if (record && !force) {
-		throw new Error(`Domain ${domainName} already exists in DNS`)
-	}
-
-	return { zone: { id: zone.id, name: zone.name }, name: domainName }
-}
-
-async function resolveEphemeralDomain(cf: Cloudflare, cfh: CloudflareHelper, config: Config, force?: boolean) {
-	for (let attempt = 1; attempt <= 5; attempt++) {
-		const result = await resolveFullDomain(cf, cfh, config, generateEphemeralName(), force)
-		if (result) return result
-	}
-	throw new Error("Failed to generate unique ephemeral domain after 5 attempts")
-}
-
-async function checkExistingTunnel(cf: Cloudflare, cfh: CloudflareHelper, config: Config, tunnelSecrets: ReturnType<typeof getTunnelSecrets>, domainName: string) {
-	const tunnel = await cfh.tunnelByName(config.account_id, domainName)
-
-	if (tunnel && tunnel.id) {
-		// Try local storage first
-		let tunnel_secret = await tunnelSecrets.getSecret(tunnel.id)
-		if (tunnel_secret) {
-			return { tunnel_id: tunnel.id, tunnel_secret }
-		}
-
-		// Get token from Cloudflare API
-		const token = await cf.zeroTrust.tunnels.cloudflared.token.get(tunnel.id, { account_id: config.account_id })
-
-		try {
-			const decoded = JSON.parse(Buffer.from(token, "base64").toString("utf-8"))
-			tunnel_secret = decoded.s as string
-
-			if (tunnel_secret) {
-				await tunnelSecrets.saveSecret(tunnel.id, tunnel_secret)
-			}
-		} catch {
-			// Failed to decode token
-		}
-
-		if (tunnel_secret && typeof tunnel_secret === "string" && tunnel_secret.length > 0) {
-			return { tunnel_id: tunnel.id, tunnel_secret }
-		}
-
-		const msgs = [
-			`Could not get the tunnel secret for '${domainName}' (ID: ${tunnel.id})\n`,
-			`The tunnel may have been created with a different configuration. You may need to delete the existing tunnel, run:`,
-			`  cloudflared tunnel delete ${tunnel.id}`
-		]
-		throw new Error(msgs.join("\n"))
-	}
-
-	return { tunnel_id: undefined, tunnel_secret: undefined }
-}
-
-async function createNewTunnel(cf: Cloudflare, config: Config, tunnelSecrets: ReturnType<typeof getTunnelSecrets>, domainName: string) {
-	const tunnel_secret = generateTunnelSecret()
-	const tunnel = await cf.zeroTrust.tunnels.cloudflared.create({
-		account_id: config.account_id,
-		name: domainName,
-		config_src: "local",
-		tunnel_secret
-	})
-
-	if (tunnel.id) {
-		await tunnelSecrets.saveSecret(tunnel.id, tunnel_secret)
-		return { tunnel_id: tunnel.id, tunnel_secret }
-	}
-
-	return { tunnel_id: undefined, tunnel_secret: undefined as string | undefined }
-}
-
-async function createDNSRecord(cf: Cloudflare, cfh: CloudflareHelper, domain: { name: string; zone: { id: string } }, tunnel_id: string, force?: boolean) {
-	const content = `${tunnel_id}.cfargotunnel.com`
-	const ttl = 1
-	const proxied = true
-
-	if (force) {
-		const updated = await cfh.updateDNSRecord(domain.zone.id, domain.name, content, ttl, proxied)
-		if (updated) return
-	}
-
-	await cf.dns.records.create({
-		zone_id: domain.zone.id,
-		type: "CNAME",
-		name: domain.name,
-		content,
-		ttl,
-		proxied
-	})
 }

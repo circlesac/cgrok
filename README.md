@@ -1,35 +1,44 @@
 # @circlesac/cgrok
 
-A Cloudflare-based ngrok CLI compatible program that allows you to create secure tunnels to your local development environment.
+An ngrok-compatible CLI that uses Cloudflare Tunnel for secure tunneling.
 
-## Prerequisites
+## Quick Start
 
-- Cloudflare account with API token
-- [`cloudflared`](https://github.com/cloudflare/cloudflared)
+```bash
+# 1. Install cloudflared
+brew install cloudflared
+
+# 2. Add your Cloudflare API token
+npx @circlesac/cgrok config add-authtoken <YOUR_API_TOKEN> --account <ACCOUNT_NAME>
+
+# 3. Start a tunnel
+npx @circlesac/cgrok http 8080
+```
+
+Create an API token at https://dash.cloudflare.com/profile/api-tokens with these permissions:
+
+- Zone > DNS > Edit
+- Account > Cloudflare Tunnel > Edit
+- Zone > Zone > Read
 
 ## Usage
 
-### Use with `npx` (recommended)
-
 ```bash
-npx @circlesac/cgrok
-```
+# Random subdomain
+cgrok http 8080
 
-### Configure
+# Custom subdomain
+cgrok http 8080 --url myapp
 
-```bash
-npx @circlesac/cgrok config add-authtoken <YOUR_API_TOKEN>
-```
+# Custom domain (full)
+cgrok http 8080 --url myapp.example.com
 
-### Examples
+# ngrok-compatible --domain flag
+cgrok http 8080 --domain myapp
 
-```bash
-# Tunnel to localhost:8080 from an ephemeral domain
-npx @circlesac/cgrok http 8080
+# HTTPS local server
+cgrok http https://localhost:8443
 
-# Tunnel to localhost:8080 from https://<subdomain>.<domain>
-npx @circlesac/cgrok http 8080 --url <subdomain>
-
-# Tunnel to localhost:8080 from https://<full_domain>
-npx @circlesac/cgrok http 8080 --url <full_domain>
+# Forward to another host
+cgrok http servername.local:9000
 ```

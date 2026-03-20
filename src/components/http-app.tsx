@@ -28,8 +28,8 @@ export function HttpApp({ endpoint, options }: HttpAppProps) {
 	})
 
 	const cloudflared = useCloudflared({
-		configPath: tunnel.configPath ?? "",
-		enabled: tunnel.phase === "active" && !shuttingDown
+		tunnelToken: tunnel.tunnelToken ?? "",
+		enabled: tunnel.phase === "active" && !!tunnel.tunnelToken && !shuttingDown
 	})
 
 	const handleSignal = useCallback(async () => {
@@ -61,7 +61,7 @@ export function HttpApp({ endpoint, options }: HttpAppProps) {
 	}, [tunnel.phase, exit])
 
 	const isSetup = tunnel.phase !== "active" && tunnel.phase !== "done" && tunnel.phase !== "error"
-	const isCleanup = tunnel.phase === "cleanup-dns" || tunnel.phase === "cleanup-tunnel"
+	const isCleanup = tunnel.phase === "cleanup"
 
 	// Setup / cleanup phase
 	if (isSetup || isCleanup || tunnel.phase === "error") {
@@ -79,7 +79,8 @@ export function HttpApp({ endpoint, options }: HttpAppProps) {
 
 	// Active dashboard (ngrok-style)
 	const statusColor = cloudflared.status === "connected" ? "green" : cloudflared.status === "restarting" ? "yellow" : "red"
-	const statusLabel = cloudflared.status === "connected" ? "online" : cloudflared.status === "restarting" ? "reconnecting" : cloudflared.status === "starting" ? "connecting" : "offline"
+	const statusLabel =
+		cloudflared.status === "connected" ? "online" : cloudflared.status === "restarting" ? "reconnecting" : cloudflared.status === "starting" ? "connecting" : "offline"
 	const separator = "─".repeat(termWidth)
 
 	return (
@@ -93,7 +94,7 @@ export function HttpApp({ endpoint, options }: HttpAppProps) {
 
 			{/* Session info */}
 			<SessionRow label="Session Status" value={statusLabel} valueColor={statusColor} />
-			{tunnel.domain && <SessionRow label="Forwarding" value={`https://${tunnel.domain} → ${tunnel.localUrl}`} valueColor="cyan" />}
+			{tunnel.hostname && <SessionRow label="Forwarding" value={`https://${tunnel.hostname} → ${tunnel.localUrl}`} valueColor="cyan" />}
 			<SessionRow label="Log File" value={logger.cloudflared.path} />
 			{cloudflared.restartCount > 0 && <SessionRow label="Restarts" value={String(cloudflared.restartCount)} valueColor="yellow" />}
 

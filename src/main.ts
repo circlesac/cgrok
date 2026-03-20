@@ -14,4 +14,12 @@ for (const command of Object.values(commands)) {
 	program.addCommand(command)
 }
 
+// ngrok-compatible "version" subcommand
+program
+	.command("version")
+	.description("Print the version string")
+	.action(() => {
+		process.stdout.write(`cgrok ${packageJson.version}\n`)
+	})
+
 program.parse()
