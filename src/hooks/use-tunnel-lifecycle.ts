@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { TunnelManager } from "@/utils/cloudflare"
-import { loadConfig } from "@/utils/config"
+import { ensureCloudflared, loadConfig } from "@/utils/config"
 import { parseLocalUrl } from "@/utils/helpers"
 
 export type Phase = "init" | "tunnel" | "dns" | "ingress" | "launch" | "active" | "cleanup" | "done" | "error"
@@ -63,7 +63,8 @@ export function useTunnelLifecycle({ endpoint, url, force, debug }: TunnelLifecy
 
 		async function run() {
 			try {
-				// Init — load config from cert.pem
+				// Init — check cloudflared & load config
+				ensureCloudflared()
 				const config = loadConfig()
 				const tm = new TunnelManager(config)
 				const localUrl = parseLocalUrl(endpoint)

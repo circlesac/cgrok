@@ -12,12 +12,7 @@ export interface Config {
 
 const DEFAULT_CONFIG_DIR = join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".config", "cgrok")
 
-export function loadConfig(configDir?: string): Config {
-	const cgrokConfigDir = configDir ?? DEFAULT_CONFIG_DIR
-	const configFile = join(cgrokConfigDir, "config.json")
-	const cloudflaredDir = join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".cloudflared")
-
-	// Check cloudflared is installed
+export function ensureCloudflared(): void {
 	try {
 		execSync("which cloudflared", { stdio: "ignore" })
 	} catch {
@@ -30,6 +25,12 @@ export function loadConfig(configDir?: string): Config {
 					: "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
 		throw new Error(`cloudflared is not installed.\nInstall it with:\n  ${installCmd}`)
 	}
+}
+
+export function loadConfig(configDir?: string): Config {
+	const cgrokConfigDir = configDir ?? DEFAULT_CONFIG_DIR
+	const configFile = join(cgrokConfigDir, "config.json")
+	const cloudflaredDir = join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".cloudflared")
 
 	// Read config
 	let configData: { apiToken: string; accountId: string }
