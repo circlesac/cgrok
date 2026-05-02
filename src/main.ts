@@ -4,6 +4,9 @@ import { Command } from "commander"
 
 import * as commands from "@/commands"
 import packageJson from "../package.json" with { type: "json" }
+import { checkForUpdate } from "./lib/update-check.ts"
+
+await checkForUpdate()
 
 const program = new Command()
 program.name(packageJson.name)
