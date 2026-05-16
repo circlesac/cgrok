@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { TunnelManager } from "@/utils/cloudflare"
+import { TunnelManager, tunnelNameForHostname } from "@/utils/cloudflare"
 import { ensureCloudflared, loadConfig } from "@/utils/config"
 import { parseLocalUrl } from "@/utils/helpers"
 
@@ -65,13 +65,21 @@ export function useTunnelLifecycle({ endpoint, url, force, debug }: TunnelLifecy
 			try {
 				// Init — check cloudflared & load config
 				ensureCloudflared()
-				const config = loadConfig()
-				const tm = new TunnelManager(config)
+				const baseConfig = loadConfig()
+				const resolver = new TunnelManager(baseConfig)
 				const localUrl = parseLocalUrl(endpoint)
 
 				if (cancelled) return
 
-				// Ensure singleton tunnel exists
+				// Resolve domain before choosing a tunnel so each public hostname
+				// owns its own Cloudflare Tunnel and cannot fight another cgrok.
+				const { hostname, zoneId } = await resolver.resolveDomain(url, force)
+				const config = { ...baseConfig, tunnelName: tunnelNameForHostname(hostname) }
+				const tm = new TunnelManager(config)
+
+				if (cancelled) return
+
+				// Ensure hostname-owned tunnel exists
 				setPhase("tunnel", `Ensuring tunnel '${config.tunnelName}'`)
 				const tunnelId = await tm.ensureTunnel()
 				if (cancelled) return
@@ -82,10 +90,6 @@ export function useTunnelLifecycle({ endpoint, url, force, debug }: TunnelLifecy
 				if (stale.length > 0) {
 					addStep(`Cleaned ${stale.length} stale ingress rule(s)`, true)
 				}
-
-				// Resolve domain
-				const { hostname, zoneId } = await tm.resolveDomain(url, force)
-				if (cancelled) return
 
 				// Create DNS record
 				setPhase("dns", `Setting up DNS for '${hostname}'`)
@@ -124,6 +128,15 @@ export function useTunnelLifecycle({ endpoint, url, force, debug }: TunnelLifecy
 
 					// Check if any ingress rules remain
 					const remaining = await tm.getIngress(tunnelId)
+					if (remaining.length === 0) {
+						try {
+							await tm.deleteTunnel(tunnelId)
+							setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: "Tunnel deleted", success: true }] }))
+						} catch {
+							setState((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, { label: "Failed to delete tunnel", success: false }] }))
+						}
+					}
+
 					setState((prev) => ({
 						...prev,
 						phase: "done",

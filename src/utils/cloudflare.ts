@@ -1,6 +1,6 @@
 import { Cloudflare } from "cloudflare"
-import { randomBytes } from "crypto"
-import { mkdirSync, writeFileSync } from "fs"
+import { createHash, randomBytes } from "crypto"
+import { mkdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 
 import type { Config } from "@/utils/config"
@@ -55,7 +55,7 @@ export class CloudflareHelper {
 	}
 }
 
-// --- Tunnel Manager (singleton tunnel per PC) ---
+// --- Tunnel Manager ---
 
 export class TunnelManager {
 	private cf: Cloudflare
@@ -69,7 +69,7 @@ export class TunnelManager {
 	}
 
 	/**
-	 * Get or create the singleton tunnel for this PC.
+	 * Get or create the tunnel owned by this public hostname.
 	 * Returns the tunnel ID.
 	 */
 	async ensureTunnel(): Promise<string> {
@@ -128,6 +128,8 @@ export class TunnelManager {
 
 	/**
 	 * Create a DNS CNAME record pointing to the tunnel.
+	 * If a previous cgrok process failed to clean up, the existing record is
+	 * reused when it already points at this tunnel.
 	 */
 	async createDNS(tunnelId: string, hostname: string, zoneId: string, force?: boolean) {
 		const content = `${tunnelId}.cfargotunnel.com`
@@ -138,6 +140,11 @@ export class TunnelManager {
 		}
 
 		const existing = await this.cfh.getDNSRecord(zoneId, hostname)
+		if (existing) {
+			const existingContent = "content" in existing ? String(existing.content) : ""
+			if (existingContent === content) return
+		}
+
 		if (existing && !force) {
 			throw new Error(`DNS record '${hostname}' already exists. Use --force to overwrite.`)
 		}
@@ -157,6 +164,19 @@ export class TunnelManager {
 	 */
 	async removeDNS(hostname: string, zoneId: string) {
 		await this.cfh.removeDNSRecord(zoneId, hostname)
+	}
+
+	/**
+	 * Delete the Cloudflare Tunnel when no ingress rules remain.
+	 */
+	async deleteTunnel(tunnelId: string) {
+		try {
+			await this.cf.zeroTrust.tunnels.cloudflared.delete(tunnelId, {
+				account_id: this.config.accountId
+			})
+		} finally {
+			this.removeCredentials(tunnelId)
+		}
 	}
 
 	/**
@@ -194,7 +214,7 @@ export class TunnelManager {
 		for (const rule of ingress) {
 			try {
 				const url = new URL(rule.service)
-				const port = parseInt(url.port || (url.protocol === "https:" ? "443" : "80"))
+				const port = parseInt(url.port || (url.protocol === "https:" ? "443" : "80"), 10)
 				const net = await import("net")
 				const isOpen = await new Promise<boolean>((resolve) => {
 					const socket = net.createConnection({ port, host: url.hostname }, () => {
@@ -256,14 +276,13 @@ export class TunnelManager {
 	}
 
 	private saveCredentials(tunnelId: string, tunnelSecret: string) {
-		const credPath = join(this.config.cloudflaredDir, `${tunnelId}.json`)
 		try {
 			mkdirSync(this.config.cloudflaredDir, { recursive: true })
 		} catch {
 			// already exists
 		}
 		writeFileSync(
-			credPath,
+			this.credentialsPath(tunnelId),
 			JSON.stringify(
 				{
 					AccountTag: this.config.accountId,
@@ -275,8 +294,29 @@ export class TunnelManager {
 			)
 		)
 	}
+
+	private removeCredentials(tunnelId: string) {
+		rmSync(this.credentialsPath(tunnelId), { force: true })
+	}
+
+	private credentialsPath(tunnelId: string) {
+		return join(this.config.cloudflaredDir, `${tunnelId}.json`)
+	}
 }
 
 export function generateEphemeralName() {
 	return randomBytes(6).toString("hex").slice(0, 12)
+}
+
+export function tunnelNameForHostname(hostname: string) {
+	const normalized = hostname
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+	const base = normalized || generateEphemeralName()
+	const name = `cgrok-${base}`
+	if (name.length <= 64) return name
+
+	const hash = createHash("sha256").update(hostname).digest("hex").slice(0, 8)
+	return `${name.slice(0, 55)}-${hash}`
 }
