@@ -86,10 +86,22 @@ jobs:
           fi
           tar czf ${{ matrix.name }}.tar.gz cgrok
 
+      - name: Package Debian artifact
+        if: startsWith(matrix.target, 'bun-linux')
+        run: |
+          case "${{ matrix.target }}" in
+            bun-linux-x64) arch=amd64 ;;
+            bun-linux-arm64) arch=arm64 ;;
+            *) exit 1 ;;
+          esac
+          ./packaging/build-deb.sh "cgrok" "${{ needs.version.outputs.version }}" "$arch" .
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.tar.gz
+          path: |
+            ${{ matrix.name }}.*
+            cgrok_*.deb
 
   release:
     needs: [version, build]
@@ -108,6 +120,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/**/*.tar.gz
+            artifacts/**/*.deb
             bin/install.sh
 
   publish-npm:
@@ -137,7 +150,7 @@ jobs:
       - name: Publish
         run: npm publish --access public
 
-  publish-homebrew:
+  publish-package-indexes:
     needs: [version, release, build]
     runs-on: ubuntu-latest
     steps:
@@ -147,7 +160,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Update Homebrew formula
+      - name: Update Homebrew and APT indexes
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
@@ -166,8 +179,23 @@ jobs:
           sed -i "s/SHA_DARWIN_X64/${SHA_DARWIN_X64}/g" Formula/cgrok.rb
           sed -i "s/SHA_LINUX_ARM64/${SHA_LINUX_ARM64}/g" Formula/cgrok.rb
           sed -i "s/SHA_LINUX_X64/${SHA_LINUX_X64}/g" Formula/cgrok.rb
+
+          mapfile -t packages < <(find ../artifacts -type f -name 'cgrok_*.deb' | sort)
+          test "${#packages[@]}" -eq 2
+          for package in "${packages[@]}"; do
+            ./apt/scripts/add-package.sh "$package" circlesac/cgrok "v${VERSION}"
+          done
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/cgrok.rb
+          git add Formula/cgrok.rb "apt/manifests/cgrok/${VERSION}"
+          git diff --cached --quiet && exit 0
           git commit -m "Update cgrok to ${VERSION}"
-          git push
+          for attempt in 1 2 3; do
+            git pull --rebase origin main
+            if git push origin main; then
+              exit 0
+            fi
+            printf 'push attempt %s failed\n' "$attempt" >&2
+          done
+          exit 1
